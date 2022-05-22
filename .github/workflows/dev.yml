@@ -1,0 +1,92 @@
+name: Build workflow
+on:
+  push:
+    branches:
+      - development
+
+jobs:
+  build:
+    runs-on: macos-latest
+    if: "startsWith(github.event.head_commit.message, 'dev_')"
+    steps:
+      - uses: actions/checkout@v2 
+      - uses: actions/setup-java@v1
+        with:
+          java-version: 12.x
+      - uses: subosito/flutter-action@v1
+        with:
+          flutter-version: 2.2.x
+      - name: Get packages
+        run: flutter pub get
+      - name: Build Web
+        run: flutter build web
+      - name: Compress Web build
+        uses: papeloto/action-zip@v1
+        with:
+          files: build/web
+          dest: build/web.zip
+      - name: Build Android (Debug)
+        run: flutter build apk --debug --split-per-abi
+      - name: Build iOS (Debug-notsigned) Runner.app
+        run: flutter build ios --debug --no-codesign
+      - name: Prepare iOS IPA Step 1
+        run: mkdir build/ios/iphoneos/Payload
+      - name: Prepare iOS IPA Step 2
+        run: mv build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload
+      - name: Prepare iOS IPA Step 3
+        uses: papeloto/action-zip@v1
+        with:
+          files: build/ios/iphoneos/Payload
+          dest: build/ios/payload.zip
+      - name: Prepare iOS IPA Step 4
+        run: mv build/ios/payload.zip build/ios/application-ios.ipa
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.event.head_commit.message }}
+          release_name: ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: true
+      - name: Upload Android build ARM 32 bit
+        id: upload-android32-build 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ./build/app/outputs/flutter-apk/app-armeabi-v7a-debug.apk
+          asset_name: app-armeabi-v7a-debug.apk
+          asset_content_type: application/zip
+      - name: Upload Android build ARM 64 bit
+        id: upload-android64-build 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ./build/app/outputs/flutter-apk/app-arm64-v8a-debug.apk
+          asset_name: app-arm64-v8a-debug.apk
+          asset_content_type: application/zip
+      - name: Upload iOS build
+        id: upload-ios-build 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ./build/ios/application-ios.ipa
+          asset_name: application-ios.ipa
+          asset_content_type: application/zip
+      - name: Upload Web build
+        id: upload-web-build 
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }} 
+          asset_path: ./build/web.zip
+          asset_name: web.zip
+          asset_content_type: application/zip
