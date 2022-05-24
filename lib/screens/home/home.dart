@@ -73,10 +73,16 @@ Future<List<PredictionResult>> predictImage(PredictionProps props) async {
 
 void isolateHandler(
     dynamic data, SendPort mainSendPort, SendErrorFunction sendError) async {
-  if (data is PredictionProps) {
-    mainSendPort.send(data);
-    List<PredictionResult> result = await predictImage(data);
-    mainSendPort.send(result);
+  if (data is List<PredictionProps>) {
+    List<Future<List<PredictionResult>>> tasks = [];
+    for (PredictionProps props in data) {
+      mainSendPort.send(props);
+      tasks.add(predictImage(props));
+    }
+    List<List<PredictionResult>> results = await Future.wait(tasks);
+    for (List<PredictionResult> result in results) {
+      mainSendPort.send(result);
+    }
   }
 }
 
@@ -93,6 +99,7 @@ class _HomeState extends State<Home> {
   List<PredictionResult> predictions = [];
   int totalImages = 0;
   int scanning = -1;
+  int batchSize = 10;
   void init() async {
     interpreter = await Interpreter.fromAsset(
       "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
@@ -147,19 +154,25 @@ class _HomeState extends State<Home> {
     if (Directory("${tempPath.path}/images").existsSync()) {
       Directory("${tempPath.path}/images").deleteSync(recursive: true);
     }
-    final List<PredictionProps> tasks = [];
+    final List<List<PredictionProps>> tasks = [];
     List<String> labels = await FileUtil.loadLabels(
         "assets/${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.LABEL_FILE_NAME}");
 
     setState(() {
       totalImages = videos.length;
     });
-    for (int index = 0; index < videos.length; index++) {
-      tasks.add(PredictionProps(
-          index, tempPath, videos[index], interpreter!.address, labels));
+    for (int index = 0; index < videos.length; index = index + batchSize) {
+      List<PredictionProps> task = [];
+      for (int internalIndex = 0; internalIndex < batchSize; internalIndex++) {
+        if (index + internalIndex < videos.length) {
+          task.add(PredictionProps(index + internalIndex, tempPath,
+              videos[index + internalIndex], interpreter!.address, labels));
+        }
+      }
+      tasks.add(task);
     }
     try {
-      for (PredictionProps task in tasks) {
+      for (List<PredictionProps> task in tasks) {
         worker.sendMessage(task);
       }
     } catch (e) {
@@ -168,12 +181,48 @@ class _HomeState extends State<Home> {
   }
 
   final TextEditingController _pathController = TextEditingController();
-  final TextEditingController _savepathController = TextEditingController();
 
   @override
   void initState() {
     init();
     super.initState();
+  }
+
+  Future<void> deleteIfEmpty(String path, bool recursion) async {
+    List items = await Directory(path).list(recursive: false).toList();
+    if (items
+        .whereType<File>()
+        .where((item) => item.path.endsWith('.mp4'))
+        .isNotEmpty) return;
+    if (items.whereType<Directory>().isEmpty) {
+      await Directory(path).delete(recursive: true);
+    } else {
+      if (recursion) {
+        for (Directory item in items.whereType<Directory>()) {
+          await deleteIfEmpty(item.path, recursion);
+        }
+      }
+    }
+  }
+
+  Future<void> deleteEmptyFolders(BuildContext context) async {
+    String? path = await FilesystemPicker.open(
+      title: 'Pick Media',
+      context: context,
+      rootDirectory: rootPath!,
+      fsType: FilesystemType.all,
+      pickText: 'Pick the video directory',
+      folderIconColor: Colors.teal,
+    );
+    setState(() {
+      isLoading = true;
+    });
+    if (path != null) {
+      await deleteIfEmpty(path, true);
+    }
+    setState(() {
+      isLoading = false;
+    });
   }
 
   Future<void> resetWorker() async {
@@ -241,12 +290,22 @@ class _HomeState extends State<Home> {
                     height: 5,
                   ),
                   ElevatedButton(
+                    onPressed: () => deleteEmptyFolders(context),
+                    child: const Text(
+                      'Delete Empty Folders',
+                      style: TextStyle(color: Colors.black),
+                    ),
+                  ),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  ElevatedButton(
                     onPressed: () async {
                       String? path = await FilesystemPicker.open(
                         title: 'Pick Media',
                         context: context,
                         rootDirectory: rootPath!,
-                        fsType: FilesystemType.folder,
+                        fsType: FilesystemType.all,
                         pickText: 'Pick the video directory',
                         folderIconColor: Colors.teal,
                       );
@@ -272,14 +331,6 @@ class _HomeState extends State<Home> {
                       style: TextStyle(color: Colors.black),
                     ),
                   ),
-                  TextFormField(
-                    controller: _savepathController,
-                    decoration: const InputDecoration(
-                      labelText: 'Save Path',
-                      enabled: false,
-                    ),
-                    onChanged: null,
-                  ),
                   const SizedBox(
                     height: 5,
                   ),
@@ -291,6 +342,7 @@ class _HomeState extends State<Home> {
                         child: Column(
                           children: [
                             ListView.builder(
+                                reverse: true,
                                 physics: const NeverScrollableScrollPhysics(),
                                 itemCount: predictions.length,
                                 shrinkWrap: true,

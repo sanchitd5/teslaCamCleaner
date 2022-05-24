@@ -8,7 +8,7 @@ class ExportVideoFrameX {
     await shell.Shell().run(
       "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg",
     );
-    await Future.delayed(const Duration(milliseconds: 500));
+    await Future.delayed(const Duration(milliseconds: 1));
   }
 
   static Future<List<File>> getFramesFromVideoFile(String path,
@@ -28,7 +28,7 @@ class ExportVideoFrameX {
 
     await getFrames(path, appStorage.path, fName);
     List<FileSystemEntity> files =
-        Directory("${appStorage.path}/images/$fName").listSync();
+        await Directory("${appStorage.path}/images/$fName").list().toList();
     return files.map((element) {
       return File(element.path);
     }).toList();

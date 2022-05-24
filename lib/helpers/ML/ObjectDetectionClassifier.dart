@@ -53,7 +53,7 @@ class ObjectDetectionClassifier {
   static const int INPUT_SIZE = 300;
 
   /// Result score threshold
-  static const double THRESHOLD = 0.5;
+  static const double THRESHOLD = 0.7;
 
   /// Pre-process the image
   static TensorImage getProcessedImage(TensorImage inputImage) {
@@ -159,7 +159,6 @@ class ObjectDetectionClassifier {
         // inverseTransformRect transforms it our [inputImage]
         Rect transformedRect = imageProcessor!
             .inverseTransformRect(locations[i], image.height, image.width);
-
         recognitions.add(
           Recognition(i, label, score, transformedRect),
         );
