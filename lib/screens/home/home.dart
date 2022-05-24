@@ -131,13 +131,14 @@ class _HomeState extends State<Home> {
       });
     } else if (data is List<PredictionResult>) {
       if (currentlyScanning != null) {
+        String _file = currentlyScanning!;
         if (data.isEmpty) {
-          File(currentlyScanning!).deleteSync(recursive: true);
+          File(_file).deleteSync(recursive: true);
         } else if (savePath.isNotEmpty) {
           //move file to new location
-          File(currentlyScanning!)
-              .copy("$savePath/${currentlyScanning!.split('/').last}")
-              .then((value) => File(currentlyScanning!).deleteSync());
+          File(_file)
+              .copy("$savePath/${_file.split('/').last}")
+              .then((value) => File(_file).deleteSync());
         }
       }
       setState(() {
