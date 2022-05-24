@@ -12,6 +12,9 @@ import '../../models/models.dart';
 Future<List<PredictionResult>> predictImage(PredictionProps props) async {
   List<PredictionResult> predictions = [];
   String fileName = props.videoPath.split('/').last.split('.').first;
+  if(Platform.isWindows){
+    fileName = props.videoPath.split("\\").last.split('.').first;
+  }
   List<File> images = await ExportVideoFrameX.getFramesFromVideoFile(
       props.videoPath,
       storagePath: props.tempPath.path,

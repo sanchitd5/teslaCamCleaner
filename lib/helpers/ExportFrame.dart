@@ -1,13 +1,20 @@
 import 'dart:io';
 import 'package:process_run/shell.dart' as shell;
 import 'package:path_provider/path_provider.dart' as pathProvider;
+import 'package:user_onboarding/helpers/helpers.dart';
 
 class ExportVideoFrameX {
   static Future<void> getFrames(
       String filePath, String storagePath, String fileName) async {
-    await shell.Shell().run(
-      "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg",
-    );
+    String command =
+        "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg";
+    if (Platform.isWindows) {
+      await shell.Shell(workingDirectory: './blobs').run(command);
+    } else if (Platform.isLinux) {
+      await shell.Shell().run(command);
+    } else {
+      throw 'Unsupported Platform';
+    }
     await Future.delayed(const Duration(milliseconds: 5));
   }
 

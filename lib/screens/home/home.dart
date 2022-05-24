@@ -8,6 +8,7 @@ import 'package:full_screen_image_null_safe/full_screen_image_null_safe.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:filesystem_picker/filesystem_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:process_run/shell.dart';
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:tflite_flutter_helper/tflite_flutter_helper.dart';
 import '../../models/models.dart';
@@ -35,12 +36,20 @@ class _HomeState extends State<Home> {
   int batchSize = 1;
   String savePath = '';
   bool isLoading = false;
+  bool missingTflite = false;
 
   void init() async {
-    interpreter = await Interpreter.fromAsset(
-      "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
-      options: InterpreterOptions()..threads = 4,
-    );
+    try {
+      interpreter = await Interpreter.fromAsset(
+        "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
+        options: InterpreterOptions()..threads = 4,
+      );
+    } catch (e) {
+      setState(() {
+        missingTflite = true;
+      });
+      logger.e(e);
+    }
     await worker.init(mainMessageHandler, isolateHandler,
         errorHandler: logger.e, queueMode: true);
     if (!Platform.isAndroid) {
@@ -48,6 +57,8 @@ class _HomeState extends State<Home> {
         setState(() {
           rootPath = Directory('/usb');
         });
+      } else if (Platform.isWindows) {
+        return;
       } else {
         Directory? downloads = await getDownloadsDirectory();
         if (downloads != null) {
@@ -121,7 +132,7 @@ class _HomeState extends State<Home> {
       }
     } catch (e) {
       logger.e(e);
-    } finally {}
+    }
   }
 
   Future<void> deleteIfEmpty(String path, bool recursion) async {
@@ -180,6 +191,49 @@ class _HomeState extends State<Home> {
     super.initState();
   }
 
+  Future<Widget> _windowsDriveSelector() async {
+    if (!Platform.isWindows) return const SizedBox.shrink();
+    List<ProcessResult> result =
+        await Shell().run('wmic logicaldisk get caption');
+    List drives =
+        result[0].stdout.split('\r\r\n').map((elem) => elem.trim()).toList();
+    drives.removeWhere((elem) => elem.isEmpty);
+    drives.removeAt(0);
+    if (drives.isEmpty) return const Text('No drives found');
+    rootPath ??= Directory(drives[0]);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          const Text(
+            'Select Drive',
+            style: TextStyle(fontSize: 16, color: Colors.black),
+          ),
+          DropdownButton<String>(
+            value: rootPath!.path,
+            items: drives.map((elem) {
+              return DropdownMenuItem<String>(
+                value: elem,
+                child: Text(
+                  elem,
+                  style: const TextStyle(fontSize: 16, color: Colors.black),
+                ),
+              );
+            }).toList(),
+            onChanged: (value) {
+              if (value != null) {
+                setState(() {
+                  rootPath = Directory(value);
+                });
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
   //title Widget for the appbar
   Widget _title(BuildContext context) {
     return RichText(
@@ -205,202 +259,241 @@ class _HomeState extends State<Home> {
     );
   }
 
+  void pickSavePath() async {
+    String? path = await FilesystemPicker.open(
+      title: 'Pick Media',
+      context: context,
+      rootDirectory: rootPath!,
+      fsType: FilesystemType.all,
+      pickText: 'Pick the save directory',
+      folderIconColor: Colors.teal,
+    );
+    if (path != null) {
+      setState(() {
+        savePath = path;
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: _title(context),
       ),
-      body: rootPath == null && !Platform.isAndroid
-          ? const Text('loading')
-          : Column(
-              children: [
-                Container(
-                  height: MediaQuery.of(context).size.height * 0.3,
-                  padding: const EdgeInsets.all(10),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.max,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.max,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: MediaQuery.of(context).size.width * 0.75,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                            ),
-                            child: Text(savePath),
-                          ),
-                          Container(
-                            width: MediaQuery.of(context).size.width * 0.20,
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
-                            ),
-                            child: Center(
-                              child: ElevatedButton(
-                                onPressed: () async {
-                                  String? path = await FilesystemPicker.open(
-                                    title: 'Pick Media',
-                                    context: context,
-                                    rootDirectory: rootPath!,
-                                    fsType: FilesystemType.all,
-                                    pickText: 'Pick the save directory',
-                                    folderIconColor: Colors.teal,
-                                  );
-                                  if (path != null) {
-                                    setState(() {
-                                      savePath = path;
-                                    });
-                                  }
-                                },
-                                child: const Text(
-                                  'Select Save Directory',
-                                  style: TextStyle(color: Colors.black),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.max,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Container(
-                            width: MediaQuery.of(context).size.width * 0.75,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                            ),
-                            child: TextFormField(
-                              controller: _pathController,
-                              decoration: const InputDecoration(
-                                labelText: 'Sentry Videos Folder',
-                                enabled: false,
-                              ),
-                              onChanged: null,
-                            ),
-                          ),
-                          Container(
-                            width: MediaQuery.of(context).size.width * 0.20,
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 10,
-                            ),
-                            child: Center(
-                              child: ElevatedButton(
-                                onPressed: () async {
-                                  String? path = await FilesystemPicker.open(
-                                    title: 'Pick Media',
-                                    context: context,
-                                    rootDirectory: rootPath!,
-                                    fsType: FilesystemType.all,
-                                    pickText: 'Pick the video directory',
-                                    folderIconColor: Colors.teal,
-                                  );
-                                  if (path != null) {
-                                    setState(() {
-                                      _pathController.text = path;
-                                    });
-                                    List<FileSystemEntity> items =
-                                        Directory(path)
-                                            .listSync(recursive: true);
-                                    List<String> videos = [];
-                                    for (var element in items) {
-                                      if (element is File) {
-                                        if (element.path.endsWith('.mp4')) {
-                                          videos.add(element.path);
-                                        }
-                                      }
-                                    }
-                                    predictAllImagesInDir(videos);
-                                  }
-                                },
-                                child: const Text(
-                                  'Select Video Directory',
-                                  style: TextStyle(color: Colors.black),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(
-                        height: 5,
-                      ),
-                      ElevatedButton(
-                        onPressed: () => deleteEmptyFolders(context),
-                        child: const Text(
-                          'Delete Empty Folders',
-                          style: TextStyle(color: Colors.black),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(
-                  height: 5,
-                ),
-                if (currentlyScanning != null)
-                  Text(
-                    'Scanning $currentlyScanning (${scanning + 1}/$totalImages)',
-                    style: const TextStyle(fontSize: 20),
-                  ),
-                if (predictions.isNotEmpty)
-                  SizedBox(
-                    height: MediaQuery.of(context).size.height * 0.6,
-                    child: SingleChildScrollView(
-                      physics: const ScrollPhysics(),
+      body: missingTflite
+          ? ErrorWidget.withDetails(
+              message:
+                  'Tflite was not found in the blobs\nbuild and place it in blobs folder')
+          : rootPath == null && !(Platform.isAndroid || Platform.isWindows)
+              ? const Text('loading')
+              : Column(
+                  children: [
+                    FutureBuilder(
+                      builder:
+                          (BuildContext context, AsyncSnapshot<Widget> widget) {
+                        if (widget.connectionState == ConnectionState.waiting) {
+                          return const CircularProgressIndicator.adaptive();
+                        }
+                        if (widget.connectionState == ConnectionState.done &&
+                            widget.hasData) return widget.data!;
+                        return const CircularProgressIndicator.adaptive();
+                      },
+                      future: _windowsDriveSelector(),
+                    ),
+                    Container(
+                      height: MediaQuery.of(context).size.height * 0.3,
+                      padding: const EdgeInsets.all(10),
                       child: Column(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.max,
                         children: [
-                          ListView.builder(
-                              reverse: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: predictions.length,
-                              shrinkWrap: true,
-                              itemBuilder: (context, index) {
-                                return SizedBox(
-                                  child: Card(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        SizedBox(
-                                          child: FullScreenWidget(
-                                            child: Image.file(
-                                              predictions[index].image,
-                                              fit: BoxFit.fitHeight,
-                                            ),
-                                          ),
-                                        ),
-                                        Text(predictions[index]
-                                            .label
-                                            .join(', ')),
-                                      ],
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.max,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: MediaQuery.of(context).size.width * 0.75,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                                child: Text(savePath),
+                              ),
+                              Container(
+                                width: MediaQuery.of(context).size.width * 0.20,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Center(
+                                  child: ElevatedButton(
+                                    onPressed: pickSavePath,
+                                    child: const Text(
+                                      'Select Save Directory',
+                                      style: TextStyle(color: Colors.black),
                                     ),
                                   ),
-                                );
-                              }),
+                                ),
+                              ),
+                            ],
+                          ),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.max,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                width: MediaQuery.of(context).size.width * 0.75,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                ),
+                                child: TextFormField(
+                                  controller: _pathController,
+                                  decoration: const InputDecoration(
+                                    labelText: 'Sentry Videos Folder',
+                                    enabled: false,
+                                  ),
+                                  onChanged: null,
+                                ),
+                              ),
+                              Container(
+                                width: MediaQuery.of(context).size.width * 0.20,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 10,
+                                ),
+                                child: Center(
+                                  child: ElevatedButton(
+                                    onPressed: () async {
+                                      if (savePath == '') {
+                                        ScaffoldMessenger.of(context)
+                                            .showMaterialBanner(MaterialBanner(
+                                                content: const Text(
+                                                    'Select Save Path first'),
+                                                actions: [
+                                              TextButton(
+                                                onPressed: () {
+                                                  ScaffoldMessenger.of(context)
+                                                      .hideCurrentMaterialBanner(
+                                                          reason:
+                                                              MaterialBannerClosedReason
+                                                                  .dismiss);
+                                                  pickSavePath();
+                                                },
+                                                child: const Text('OK'),
+                                              )
+                                            ]));
+                                        return;
+                                      }
+                                      String? path =
+                                          await FilesystemPicker.open(
+                                        title: 'Pick Media',
+                                        context: context,
+                                        rootDirectory: rootPath!,
+                                        fsType: FilesystemType.all,
+                                        pickText: 'Pick the video directory',
+                                        folderIconColor: Colors.teal,
+                                      );
+                                      if (path != null) {
+                                        setState(() {
+                                          _pathController.text = path;
+                                        });
+                                        List<FileSystemEntity> items =
+                                            Directory(path)
+                                                .listSync(recursive: true);
+                                        List<String> videos = [];
+                                        for (var element in items) {
+                                          if (element is File) {
+                                            if (element.path.endsWith('.mp4')) {
+                                              videos.add(element.path);
+                                            }
+                                          }
+                                        }
+                                        predictAllImagesInDir(videos);
+                                      }
+                                    },
+                                    child: const Text(
+                                      'Select Video Directory',
+                                      style: TextStyle(color: Colors.black),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(
+                            height: 5,
+                          ),
+                          ElevatedButton(
+                            onPressed: () => deleteEmptyFolders(context),
+                            child: const Text(
+                              'Delete Empty Folders',
+                              style: TextStyle(color: Colors.black),
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
-                const SizedBox(
-                  height: 5,
+                    const SizedBox(
+                      height: 5,
+                    ),
+                    if (currentlyScanning != null)
+                      Text(
+                        'Scanning $currentlyScanning (${scanning + 1}/$totalImages)',
+                        style: const TextStyle(fontSize: 20),
+                      ),
+                    if (predictions.isNotEmpty)
+                      SizedBox(
+                        height: MediaQuery.of(context).size.height * 0.6,
+                        child: SingleChildScrollView(
+                          physics: const ScrollPhysics(),
+                          child: Column(
+                            children: [
+                              ListView.builder(
+                                  reverse: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: predictions.length,
+                                  shrinkWrap: true,
+                                  itemBuilder: (context, index) {
+                                    return SizedBox(
+                                      child: Card(
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            SizedBox(
+                                              child: FullScreenWidget(
+                                                child: Image.file(
+                                                  predictions[index].image,
+                                                  fit: BoxFit.fitHeight,
+                                                ),
+                                              ),
+                                            ),
+                                            Text(predictions[index]
+                                                .label
+                                                .join(', ')),
+                                          ],
+                                        ),
+                                      ),
+                                    );
+                                  }),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const SizedBox(
+                      height: 5,
+                    ),
+                    if (!isLoading && predictions.isEmpty)
+                      const Text('No predictions'),
+                    const SizedBox(
+                      height: 10,
+                    ),
+                    if (isLoading)
+                      const CircularProgressIndicator.adaptive(
+                        backgroundColor: Colors.black,
+                      ),
+                  ],
                 ),
-                if (!isLoading && predictions.isEmpty)
-                  const Text('No predictions'),
-                const SizedBox(
-                  height: 10,
-                ),
-                if (isLoading)
-                  const CircularProgressIndicator.adaptive(
-                    backgroundColor: Colors.black,
-                  ),
-              ],
-            ),
     );
   }
 }
