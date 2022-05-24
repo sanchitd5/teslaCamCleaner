@@ -99,7 +99,7 @@ class _HomeState extends State<Home> {
   List<PredictionResult> predictions = [];
   int totalImages = 0;
   int scanning = -1;
-  int batchSize = 10;
+  int batchSize = 1;
   void init() async {
     interpreter = await Interpreter.fromAsset(
       "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
@@ -130,8 +130,15 @@ class _HomeState extends State<Home> {
         scanning = data.index;
       });
     } else if (data is List<PredictionResult>) {
-      if (data.isEmpty && currentlyScanning != null) {
-        Directory(currentlyScanning!).deleteSync(recursive: true);
+      if (currentlyScanning != null) {
+        if (data.isEmpty) {
+          File(currentlyScanning!).deleteSync(recursive: true);
+        } else if (savePath.isNotEmpty) {
+          //move file to new location
+          File(currentlyScanning!)
+              .copy("$savePath/${currentlyScanning!.split('/').last}")
+              .then((value) => File(currentlyScanning!).deleteSync());
+        }
       }
       setState(() {
         predictions.addAll(data);
@@ -181,7 +188,7 @@ class _HomeState extends State<Home> {
   }
 
   final TextEditingController _pathController = TextEditingController();
-
+  String savePath = '';
   @override
   void initState() {
     init();
@@ -293,6 +300,34 @@ class _HomeState extends State<Home> {
                     onPressed: () => deleteEmptyFolders(context),
                     child: const Text(
                       'Delete Empty Folders',
+                      style: TextStyle(color: Colors.black),
+                    ),
+                  ),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  Text(savePath),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      String? path = await FilesystemPicker.open(
+                        title: 'Pick Media',
+                        context: context,
+                        rootDirectory: rootPath!,
+                        fsType: FilesystemType.all,
+                        pickText: 'Pick the save directory',
+                        folderIconColor: Colors.teal,
+                      );
+                      if (path != null) {
+                        setState(() {
+                          savePath = path;
+                        });
+                      }
+                    },
+                    child: const Text(
+                      'Select Save Directory',
                       style: TextStyle(color: Colors.black),
                     ),
                   ),

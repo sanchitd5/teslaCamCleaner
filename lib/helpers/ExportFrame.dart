@@ -8,7 +8,6 @@ class ExportVideoFrameX {
     await shell.Shell().run(
       "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg",
     );
-    await Future.delayed(const Duration(milliseconds: 1));
   }
 
   static Future<List<File>> getFramesFromVideoFile(String path,
