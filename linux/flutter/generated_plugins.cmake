@@ -3,6 +3,8 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  flutter_media_info
+  tflite_flutter_helper
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST

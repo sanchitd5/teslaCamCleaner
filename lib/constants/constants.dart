@@ -5,7 +5,7 @@ import 'connection.dart';
 class Constants {
   static ApplicationConstants applicationConstants = ApplicationConstants();
   static ConnectionConstants connectionConstants = ConnectionConstants();
-  static const bool useAuth = true;
+  static const bool useAuth = false;
   static const bool devBuild = true;
   static const bool devConsole = true;
   static const bool debugBanner = false;

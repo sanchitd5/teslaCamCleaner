@@ -1,19 +1,199 @@
+import 'dart:io';
+import 'dart:isolate';
+
 import 'package:flutter/material.dart';
+import 'package:easy_isolate/easy_isolate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:filesystem_picker/filesystem_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:image/image.dart' as imageLib;
+import 'package:tflite_flutter/tflite_flutter.dart';
+import 'package:tflite_flutter_helper/tflite_flutter_helper.dart';
+import 'package:user_onboarding/helpers/ExportFrame.dart';
+import 'package:user_onboarding/helpers/Logger/logger.dart';
+import 'package:user_onboarding/helpers/ML/ObjectDetectionClassifier.dart';
 
-import '../../providers/providers.dart';
-
-class Home extends StatelessWidget {
+class Home extends StatefulWidget {
   static const String route = '/home';
 
   const Home({Key? key}) : super(key: key);
+
+  @override
+  State<Home> createState() => _HomeState();
+}
+
+bool isLoading = false;
+
+Interpreter? interpreter;
+
+class PredictionProps {
+  int index;
+  Directory tempPath;
+  String videoPath;
+  int interpreterAddress;
+  List<String> labels;
+  PredictionProps(this.index, this.tempPath, this.videoPath,
+      this.interpreterAddress, this.labels);
+}
+
+Future<List<PredictionResult>> predictImage(PredictionProps props) async {
+  List<PredictionResult> predictions = [];
+  String fileName = props.videoPath.split('/').last.split('.').first;
+  List<File> images = await ExportVideoFrameX.getFramesFromVideoFile(
+      props.videoPath,
+      storagePath: props.tempPath.path,
+      fileName: fileName);
+  if (images.isEmpty) return [];
+  for (int index = 0; index < images.length; index++) {
+    File image = images[index];
+    imageLib.Image? imageToSend = imageLib.decodeImage(image.readAsBytesSync());
+    if (imageToSend == null) return [];
+    var prediction = await ObjectDetectionClassifier.predict(
+        imageToSend, props.interpreterAddress, props.labels);
+    if (prediction != null) {
+      var recog = (prediction['recognitions'] as List).isNotEmpty
+          ? prediction['recognitions'] as List<Recognition>
+          : null;
+      if (recog != null) {
+        List<Recognition> filtered =
+            recog.where((element) => element.label == 'person').toList();
+        if (filtered.isNotEmpty) {
+          predictions
+              .add(PredictionResult(recog.map((e) => e.label).toList(), image));
+        }
+      }
+    }
+  }
+  if (predictions.isEmpty) {
+    Directory("${props.tempPath.path}/images/$fileName")
+        .deleteSync(recursive: true);
+  }
+  return predictions;
+}
+
+void isolateHandler(
+    dynamic data, SendPort mainSendPort, SendErrorFunction sendError) async {
+  if (data is PredictionProps) {
+    mainSendPort.send(data);
+    List<PredictionResult> result = await predictImage(data);
+    mainSendPort.send(result);
+  }
+}
+
+class PredictionResult {
+  final List<String> label;
+  final File image;
+  PredictionResult(this.label, this.image);
+}
+
+class _HomeState extends State<Home> {
+  Directory? rootPath;
+  String? currentlyScanning;
+  final worker = Worker();
+  List<PredictionResult> predictions = [];
+  int totalImages = 0;
+  int scanning = -1;
+  void init() async {
+    interpreter = await Interpreter.fromAsset(
+      "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
+      options: InterpreterOptions()..threads = 4,
+    );
+    await worker.init(mainMessageHandler, isolateHandler,
+        errorHandler: logger.e, queueMode: true);
+    if (!Platform.isAndroid) {
+      if (Platform.isLinux) {
+        setState(() {
+          rootPath = Directory('/usb');
+        });
+      } else {
+        Directory? downloads = await getDownloadsDirectory();
+        if (downloads != null) {
+          setState(() {
+            rootPath = Directory(downloads.parent.path);
+          });
+        }
+      }
+    }
+  }
+
+  void mainMessageHandler(dynamic data, SendPort isolateSendPort) {
+    if (data is PredictionProps) {
+      setState(() {
+        currentlyScanning = data.videoPath;
+        scanning = data.index;
+      });
+    } else if (data is List<PredictionResult>) {
+      if (data.isEmpty && currentlyScanning != null) {
+        Directory(currentlyScanning!).deleteSync(recursive: true);
+      }
+      setState(() {
+        predictions.addAll(data);
+        if (scanning == totalImages - 1) {
+          currentlyScanning = null;
+          isLoading = false;
+        }
+      });
+    }
+  }
+
+  void predictAllImagesInDir(List<String> videos) async {
+    if (videos.isEmpty) return;
+    if (interpreter == null) return;
+    setState(() {
+      isLoading = true;
+      predictions = [];
+    });
+    Directory tempPath = await getApplicationSupportDirectory();
+    if (Directory("${tempPath.path}/images").existsSync()) {
+      Directory("${tempPath.path}/images").deleteSync(recursive: true);
+    }
+    final List<PredictionProps> tasks = [];
+    List<String> labels = await FileUtil.loadLabels(
+        "assets/${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.LABEL_FILE_NAME}");
+
+    setState(() {
+      totalImages = videos.length;
+    });
+    for (int index = 0; index < videos.length; index++) {
+      tasks.add(PredictionProps(
+          index, tempPath, videos[index], interpreter!.address, labels));
+    }
+    try {
+      for (PredictionProps task in tasks) {
+        worker.sendMessage(task);
+      }
+    } catch (e) {
+      logger.e(e);
+    } finally {}
+  }
+
+  final TextEditingController _pathController = TextEditingController();
+  final TextEditingController _savepathController = TextEditingController();
+
+  @override
+  void initState() {
+    init();
+    super.initState();
+  }
+
+  Future<void> resetWorker() async {
+    if (worker.isInitialized == true) {
+      worker.dispose(immediate: true);
+      await worker.init(mainMessageHandler, isolateHandler,
+          errorHandler: logger.e, queueMode: true);
+    }
+    setState(() {
+      isLoading = false;
+      currentlyScanning = null;
+    });
+  }
 
   //title Widget for the appbar
   Widget _title(BuildContext context) {
     return RichText(
       textAlign: TextAlign.center,
       text: TextSpan(
-          text: 'flutter',
+          text: 'Tesla',
           style: GoogleFonts.portLligatSans(
             textStyle: Theme.of(context).textTheme.headline1,
             fontSize: 18,
@@ -22,11 +202,11 @@ class Home extends StatelessWidget {
           ),
           children: const [
             TextSpan(
-              text: 'base',
+              text: 'Cam',
               style: TextStyle(color: Colors.black54, fontSize: 18),
             ),
             TextSpan(
-              text: 'plate',
+              text: 'Cleaner',
               style: TextStyle(color: Colors.black, fontSize: 18),
             ),
           ]),
@@ -38,37 +218,122 @@ class Home extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: _title(context),
-        actions: <Widget>[
-          TextButton(
-            child: const Text(
-              'Logout',
-              style: TextStyle(color: Colors.black),
+      ),
+      body: rootPath == null && !Platform.isAndroid
+          ? const Text('loading')
+          : SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
+              child: Column(
+                children: [
+                  if (currentlyScanning != null)
+                    Text(
+                        'Scanning $currentlyScanning (${scanning + 1}/$totalImages)',
+                        style: const TextStyle(fontSize: 20)),
+                  TextFormField(
+                    controller: _pathController,
+                    decoration: const InputDecoration(
+                      labelText: 'Path',
+                      enabled: false,
+                    ),
+                    onChanged: null,
+                  ),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  ElevatedButton(
+                    onPressed: () async {
+                      String? path = await FilesystemPicker.open(
+                        title: 'Pick Media',
+                        context: context,
+                        rootDirectory: rootPath!,
+                        fsType: FilesystemType.folder,
+                        pickText: 'Pick the video directory',
+                        folderIconColor: Colors.teal,
+                      );
+                      if (path != null) {
+                        setState(() {
+                          _pathController.text = path;
+                        });
+                        List<FileSystemEntity> items =
+                            Directory(path).listSync(recursive: true);
+                        List<String> videos = [];
+                        for (var element in items) {
+                          if (element is File) {
+                            if (element.path.endsWith('.mp4')) {
+                              videos.add(element.path);
+                            }
+                          }
+                        }
+                        predictAllImagesInDir(videos);
+                      }
+                    },
+                    child: const Text(
+                      'Select Video Directory',
+                      style: TextStyle(color: Colors.black),
+                    ),
+                  ),
+                  TextFormField(
+                    controller: _savepathController,
+                    decoration: const InputDecoration(
+                      labelText: 'Save Path',
+                      enabled: false,
+                    ),
+                    onChanged: null,
+                  ),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  if (predictions.isNotEmpty)
+                    SizedBox(
+                      height: 600,
+                      child: SingleChildScrollView(
+                        physics: const ScrollPhysics(),
+                        child: Column(
+                          children: [
+                            ListView.builder(
+                                physics: const NeverScrollableScrollPhysics(),
+                                itemCount: predictions.length,
+                                shrinkWrap: true,
+                                itemBuilder: (context, index) {
+                                  return SizedBox(
+                                    child: Card(
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          SizedBox(
+                                            height: 250,
+                                            child: Image.file(
+                                              predictions[index].image,
+                                              fit: BoxFit.fitHeight,
+                                            ),
+                                          ),
+                                          Text(predictions[index]
+                                              .label
+                                              .join(', ')),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }),
+                          ],
+                        ),
+                      ),
+                    ),
+                  const SizedBox(
+                    height: 5,
+                  ),
+                  if (!isLoading && predictions.isEmpty)
+                    const Text('No predictions'),
+                  const SizedBox(
+                    height: 10,
+                  ),
+                  if (isLoading)
+                    const CircularProgressIndicator.adaptive(
+                      backgroundColor: Colors.black,
+                    ),
+                ],
+              ),
             ),
-            onPressed: () =>
-                Provider.of<UserStateProvider>(context, listen: false)
-                    .logout(context),
-          ),
-        ],
-      ),
-      body: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
-        child: Column(
-          children: <Widget>[
-            Flexible(
-              child: Builder(builder: (context) {
-                String? accessToken =
-                    Provider.of<UserStateProvider>(context).accessToken;
-                return Text(
-                  accessToken != null
-                      ? 'accessToken: $accessToken'
-                      : 'No Token Found',
-                  style: Theme.of(context).textTheme.bodyText1,
-                );
-              }),
-            )
-          ],
-        ),
-      ),
     );
   }
 }

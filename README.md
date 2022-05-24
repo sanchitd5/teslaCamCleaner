@@ -1,6 +1,6 @@
-# Flutter 2 Boilerplate (version 1.4)
+# Tesla Sentry Mode Cleaner(version 0.0.1)
 
-A boilerplate project created in flutter. Boilerplate supports iOS, Android, Web, Linux, MacOS and Windows(x86/x64). VSCode is recommended in this project.
+Tesla Sentry Mode Dashcam videos cleaner supports iOS, Android, Web, Linux, MacOS and Windows(x86/x64). VSCode is recommended in this project.
 
 Current Flutter Version : 3.0.1 
 
