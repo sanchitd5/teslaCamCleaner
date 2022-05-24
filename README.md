@@ -1,6 +1,6 @@
 # Tesla Sentry Mode Cleaner(version 0.0.1)
 
-Tesla Sentry Mode Dashcam videos cleaner supports iOS, Android, Web, Linux, MacOS and Windows(x86/x64). VSCode is recommended in this project.
+Tesla Sentry Mode Dashcam videos cleaner supports Linux. VSCode is recommended in this project.
 
 Current Flutter Version : 3.0.1 
 
@@ -30,17 +30,14 @@ flutter pub get
 ## Running the project
 
 ```
-flutter run android|ios|chrome|linux|windows|mac
+flutter run linux
+``` 
+## Building the project
+
+```
+flutter build linux
 ```
 
-## Deployment
+b) copy blobs folder to the build folder
 
-Follow the platform specific guides given below.
-
-- [iOS](https://flutter.dev/docs/deployment/ios)
-- [Android](https://flutter.dev/docs/deployment/android)
-- [Web](https://flutter.dev/docs/deployment/web)
-
-## Continuous deployment
-
-You can setup a continuous deployment for this project using [fastlane](https://docs.fastlane.tools/) using this [guide](https://flutter.dev/docs/deployment/cd).
+c) run using sudo/
