@@ -369,7 +369,10 @@ class _HomeState extends State<Home> {
                                         ScaffoldMessenger.of(context)
                                             .showMaterialBanner(MaterialBanner(
                                                 content: const Text(
-                                                    'Select Save Path first'),
+                                                  'Select Save Path first',
+                                                  style: TextStyle(
+                                                      color: Colors.black),
+                                                ),
                                                 actions: [
                                               TextButton(
                                                 onPressed: () {
@@ -380,7 +383,11 @@ class _HomeState extends State<Home> {
                                                                   .dismiss);
                                                   pickSavePath();
                                                 },
-                                                child: const Text('OK'),
+                                                child: const Text(
+                                                  'OK',
+                                                  style: TextStyle(
+                                                      color: Colors.black),
+                                                ),
                                               )
                                             ]));
                                         return;
