@@ -2,16 +2,16 @@ import 'dart:io';
 import 'dart:isolate';
 
 import 'package:flutter/material.dart';
+
 import 'package:easy_isolate/easy_isolate.dart';
+import 'package:full_screen_image_null_safe/full_screen_image_null_safe.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:filesystem_picker/filesystem_picker.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:image/image.dart' as imageLib;
 import 'package:tflite_flutter/tflite_flutter.dart';
 import 'package:tflite_flutter_helper/tflite_flutter_helper.dart';
-import 'package:user_onboarding/helpers/ExportFrame.dart';
-import 'package:user_onboarding/helpers/Logger/logger.dart';
-import 'package:user_onboarding/helpers/ML/ObjectDetectionClassifier.dart';
+import '../../models/models.dart';
+import '../../helpers/helpers.dart';
 
 class Home extends StatefulWidget {
   static const String route = '/home';
@@ -22,84 +22,20 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
-bool isLoading = false;
-
 Interpreter? interpreter;
 
-class PredictionProps {
-  int index;
-  Directory tempPath;
-  String videoPath;
-  int interpreterAddress;
-  List<String> labels;
-  PredictionProps(this.index, this.tempPath, this.videoPath,
-      this.interpreterAddress, this.labels);
-}
-
-Future<List<PredictionResult>> predictImage(PredictionProps props) async {
-  List<PredictionResult> predictions = [];
-  String fileName = props.videoPath.split('/').last.split('.').first;
-  List<File> images = await ExportVideoFrameX.getFramesFromVideoFile(
-      props.videoPath,
-      storagePath: props.tempPath.path,
-      fileName: fileName);
-  if (images.isEmpty) return [];
-  for (int index = 0; index < images.length; index++) {
-    File image = images[index];
-    imageLib.Image? imageToSend = imageLib.decodeImage(image.readAsBytesSync());
-    if (imageToSend == null) return [];
-    var prediction = await ObjectDetectionClassifier.predict(
-        imageToSend, props.interpreterAddress, props.labels);
-    if (prediction != null) {
-      var recog = (prediction['recognitions'] as List).isNotEmpty
-          ? prediction['recognitions'] as List<Recognition>
-          : null;
-      if (recog != null) {
-        List<Recognition> filtered =
-            recog.where((element) => element.label == 'person').toList();
-        if (filtered.isNotEmpty) {
-          predictions
-              .add(PredictionResult(recog.map((e) => e.label).toList(), image));
-        }
-      }
-    }
-  }
-  if (predictions.isEmpty) {
-    Directory("${props.tempPath.path}/images/$fileName")
-        .deleteSync(recursive: true);
-  }
-  return predictions;
-}
-
-void isolateHandler(
-    dynamic data, SendPort mainSendPort, SendErrorFunction sendError) async {
-  if (data is List<PredictionProps>) {
-    List<Future<List<PredictionResult>>> tasks = [];
-    for (PredictionProps props in data) {
-      mainSendPort.send(props);
-      tasks.add(predictImage(props));
-    }
-    List<List<PredictionResult>> results = await Future.wait(tasks);
-    for (List<PredictionResult> result in results) {
-      mainSendPort.send(result);
-    }
-  }
-}
-
-class PredictionResult {
-  final List<String> label;
-  final File image;
-  PredictionResult(this.label, this.image);
-}
-
 class _HomeState extends State<Home> {
+  final TextEditingController _pathController = TextEditingController();
+  final worker = Worker();
   Directory? rootPath;
   String? currentlyScanning;
-  final worker = Worker();
   List<PredictionResult> predictions = [];
   int totalImages = 0;
   int scanning = -1;
   int batchSize = 1;
+  String savePath = '';
+  bool isLoading = false;
+
   void init() async {
     interpreter = await Interpreter.fromAsset(
       "${ObjectDetectionClassifier.ASSETS_PATH}${ObjectDetectionClassifier.MODEL_FILE_NAME}",
@@ -188,16 +124,9 @@ class _HomeState extends State<Home> {
     } finally {}
   }
 
-  final TextEditingController _pathController = TextEditingController();
-  String savePath = '';
-  @override
-  void initState() {
-    init();
-    super.initState();
-  }
-
   Future<void> deleteIfEmpty(String path, bool recursion) async {
-    List items = await Directory(path).list(recursive: false).toList();
+    List<FileSystemEntity> items =
+        await (Directory(path).list(recursive: false).toList());
     if (items
         .whereType<File>()
         .where((item) => item.path.endsWith('.mp4'))
@@ -245,6 +174,12 @@ class _HomeState extends State<Home> {
     });
   }
 
+  @override
+  void initState() {
+    init();
+    super.initState();
+  }
+
   //title Widget for the appbar
   Widget _title(BuildContext context) {
     return RichText(
@@ -278,149 +213,193 @@ class _HomeState extends State<Home> {
       ),
       body: rootPath == null && !Platform.isAndroid
           ? const Text('loading')
-          : SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 20),
-              child: Column(
-                children: [
-                  if (currentlyScanning != null)
-                    Text(
-                        'Scanning $currentlyScanning (${scanning + 1}/$totalImages)',
-                        style: const TextStyle(fontSize: 20)),
-                  TextFormField(
-                    controller: _pathController,
-                    decoration: const InputDecoration(
-                      labelText: 'Path',
-                      enabled: false,
-                    ),
-                    onChanged: null,
+          : Column(
+              children: [
+                Container(
+                  height: MediaQuery.of(context).size.height * 0.3,
+                  padding: const EdgeInsets.all(10),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.start,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.max,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.max,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: MediaQuery.of(context).size.width * 0.75,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                            ),
+                            child: Text(savePath),
+                          ),
+                          Container(
+                            width: MediaQuery.of(context).size.width * 0.20,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            child: Center(
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  String? path = await FilesystemPicker.open(
+                                    title: 'Pick Media',
+                                    context: context,
+                                    rootDirectory: rootPath!,
+                                    fsType: FilesystemType.all,
+                                    pickText: 'Pick the save directory',
+                                    folderIconColor: Colors.teal,
+                                  );
+                                  if (path != null) {
+                                    setState(() {
+                                      savePath = path;
+                                    });
+                                  }
+                                },
+                                child: const Text(
+                                  'Select Save Directory',
+                                  style: TextStyle(color: Colors.black),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.max,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: MediaQuery.of(context).size.width * 0.75,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                            ),
+                            child: TextFormField(
+                              controller: _pathController,
+                              decoration: const InputDecoration(
+                                labelText: 'Sentry Videos Folder',
+                                enabled: false,
+                              ),
+                              onChanged: null,
+                            ),
+                          ),
+                          Container(
+                            width: MediaQuery.of(context).size.width * 0.20,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 10,
+                            ),
+                            child: Center(
+                              child: ElevatedButton(
+                                onPressed: () async {
+                                  String? path = await FilesystemPicker.open(
+                                    title: 'Pick Media',
+                                    context: context,
+                                    rootDirectory: rootPath!,
+                                    fsType: FilesystemType.all,
+                                    pickText: 'Pick the video directory',
+                                    folderIconColor: Colors.teal,
+                                  );
+                                  if (path != null) {
+                                    setState(() {
+                                      _pathController.text = path;
+                                    });
+                                    List<FileSystemEntity> items =
+                                        Directory(path)
+                                            .listSync(recursive: true);
+                                    List<String> videos = [];
+                                    for (var element in items) {
+                                      if (element is File) {
+                                        if (element.path.endsWith('.mp4')) {
+                                          videos.add(element.path);
+                                        }
+                                      }
+                                    }
+                                    predictAllImagesInDir(videos);
+                                  }
+                                },
+                                child: const Text(
+                                  'Select Video Directory',
+                                  style: TextStyle(color: Colors.black),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(
+                        height: 5,
+                      ),
+                      ElevatedButton(
+                        onPressed: () => deleteEmptyFolders(context),
+                        child: const Text(
+                          'Delete Empty Folders',
+                          style: TextStyle(color: Colors.black),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(
-                    height: 5,
+                ),
+                const SizedBox(
+                  height: 5,
+                ),
+                if (currentlyScanning != null)
+                  Text(
+                    'Scanning $currentlyScanning (${scanning + 1}/$totalImages)',
+                    style: const TextStyle(fontSize: 20),
                   ),
-                  ElevatedButton(
-                    onPressed: () => deleteEmptyFolders(context),
-                    child: const Text(
-                      'Delete Empty Folders',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 5,
-                  ),
-                  Text(savePath),
-                  const SizedBox(
-                    height: 5,
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      String? path = await FilesystemPicker.open(
-                        title: 'Pick Media',
-                        context: context,
-                        rootDirectory: rootPath!,
-                        fsType: FilesystemType.all,
-                        pickText: 'Pick the save directory',
-                        folderIconColor: Colors.teal,
-                      );
-                      if (path != null) {
-                        setState(() {
-                          savePath = path;
-                        });
-                      }
-                    },
-                    child: const Text(
-                      'Select Save Directory',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 5,
-                  ),
-                  ElevatedButton(
-                    onPressed: () async {
-                      String? path = await FilesystemPicker.open(
-                        title: 'Pick Media',
-                        context: context,
-                        rootDirectory: rootPath!,
-                        fsType: FilesystemType.all,
-                        pickText: 'Pick the video directory',
-                        folderIconColor: Colors.teal,
-                      );
-                      if (path != null) {
-                        setState(() {
-                          _pathController.text = path;
-                        });
-                        List<FileSystemEntity> items =
-                            Directory(path).listSync(recursive: true);
-                        List<String> videos = [];
-                        for (var element in items) {
-                          if (element is File) {
-                            if (element.path.endsWith('.mp4')) {
-                              videos.add(element.path);
-                            }
-                          }
-                        }
-                        predictAllImagesInDir(videos);
-                      }
-                    },
-                    child: const Text(
-                      'Select Video Directory',
-                      style: TextStyle(color: Colors.black),
-                    ),
-                  ),
-                  const SizedBox(
-                    height: 5,
-                  ),
-                  if (predictions.isNotEmpty)
-                    SizedBox(
-                      height: 600,
-                      child: SingleChildScrollView(
-                        physics: const ScrollPhysics(),
-                        child: Column(
-                          children: [
-                            ListView.builder(
-                                reverse: true,
-                                physics: const NeverScrollableScrollPhysics(),
-                                itemCount: predictions.length,
-                                shrinkWrap: true,
-                                itemBuilder: (context, index) {
-                                  return SizedBox(
-                                    child: Card(
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          SizedBox(
-                                            height: 250,
+                if (predictions.isNotEmpty)
+                  SizedBox(
+                    height: MediaQuery.of(context).size.height * 0.6,
+                    child: SingleChildScrollView(
+                      physics: const ScrollPhysics(),
+                      child: Column(
+                        children: [
+                          ListView.builder(
+                              reverse: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              itemCount: predictions.length,
+                              shrinkWrap: true,
+                              itemBuilder: (context, index) {
+                                return SizedBox(
+                                  child: Card(
+                                    child: Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        SizedBox(
+                                          child: FullScreenWidget(
                                             child: Image.file(
                                               predictions[index].image,
                                               fit: BoxFit.fitHeight,
                                             ),
                                           ),
-                                          Text(predictions[index]
-                                              .label
-                                              .join(', ')),
-                                        ],
-                                      ),
+                                        ),
+                                        Text(predictions[index]
+                                            .label
+                                            .join(', ')),
+                                      ],
                                     ),
-                                  );
-                                }),
-                          ],
-                        ),
+                                  ),
+                                );
+                              }),
+                        ],
                       ),
                     ),
-                  const SizedBox(
-                    height: 5,
                   ),
-                  if (!isLoading && predictions.isEmpty)
-                    const Text('No predictions'),
-                  const SizedBox(
-                    height: 10,
+                const SizedBox(
+                  height: 5,
+                ),
+                if (!isLoading && predictions.isEmpty)
+                  const Text('No predictions'),
+                const SizedBox(
+                  height: 10,
+                ),
+                if (isLoading)
+                  const CircularProgressIndicator.adaptive(
+                    backgroundColor: Colors.black,
                   ),
-                  if (isLoading)
-                    const CircularProgressIndicator.adaptive(
-                      backgroundColor: Colors.black,
-                    ),
-                ],
-              ),
+              ],
             ),
     );
   }

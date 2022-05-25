@@ -1,3 +1,5 @@
+import 'dart:io';
+
 /// Bundles different elapsed times
 class ObjectDetectionStats {
   /// Total time taken in the isolate where the inference runs
@@ -24,4 +26,20 @@ class ObjectDetectionStats {
   String toString() {
     return 'Stats{totalPredictTime: $totalPredictTime, totalElapsedTime: $totalElapsedTime, inferenceTime: $inferenceTime, preProcessingTime: $preProcessingTime}';
   }
+}
+
+class PredictionProps {
+  int index;
+  Directory tempPath;
+  String videoPath;
+  int interpreterAddress;
+  List<String> labels;
+  PredictionProps(this.index, this.tempPath, this.videoPath,
+      this.interpreterAddress, this.labels);
+}
+
+class PredictionResult {
+  final List<String> label;
+  final File image;
+  PredictionResult(this.label, this.image);
 }

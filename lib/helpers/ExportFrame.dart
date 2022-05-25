@@ -5,13 +5,10 @@ import 'package:path_provider/path_provider.dart' as pathProvider;
 class ExportVideoFrameX {
   static Future<void> getFrames(
       String filePath, String storagePath, String fileName) async {
-    try {
-      await shell.Shell().run(
-        "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg",
-      );
-    } catch (e) {
-      print(e);
-    }
+    await shell.Shell().run(
+      "ffmpeg -i $filePath -r 1/2 $storagePath/images/$fileName/%03d.jpg",
+    );
+    await Future.delayed(const Duration(milliseconds: 5));
   }
 
   static Future<List<File>> getFramesFromVideoFile(String path,
